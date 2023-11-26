@@ -1,94 +1,64 @@
-import torch
-from transformers import BertTokenizer, BertForSequenceClassification
-import re
+import tensorflow as tf
+import numpy as np
+import json
 import pandas as pd
+from transformers import BertTokenizer, TFBertForSequenceClassification
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
+# Load your JSON data directly
+with open("Datasets/part_10.json", "r", encoding="utf-8") as f:
+    data = json.load(f)
 
-def preprocess_text(text):
-    text = str(text)
-    text = re.sub(r"[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]", " ", text)
-    text = text.lower()
-    return text
+# Convert to pandas DataFrame
+df = pd.DataFrame(data)
 
+# Split the dataset into training and validation sets
+train_data, val_data = train_test_split(df, test_size=0.1, random_state=42)
 
-def predict_sentiment_ensemble(models, tokenizers, text, max_length=128):
-    votes = []
+# Load pre-trained BERT model and tokenizer
+tokenizer = BertTokenizer.from_pretrained("Models/model_1")
 
-    for model, tokenizer in zip(models, tokenizers):
-        model.eval()
-        preprocessed_text = preprocess_text(text)
+# Number of models
+num_models = 5
 
-        # Tokenize and handle long texts by splitting into chunks
-        tokens = tokenizer(
-            preprocessed_text,
-            add_special_tokens=True,
-            return_tensors="pt",
-        )
+# Load the fine-tuned models
+models = []
+for i in range(1, num_models + 1):
+    model = TFBertForSequenceClassification.from_pretrained(
+        f"Models/model_{i}")
+    models.append(model)
 
-        input_ids = tokens["input_ids"]
-        attention_mask = tokens["attention_mask"]
+# Load and preprocess validation data
+max_length = 128
+batch_size = 64
+val_encodings = tokenizer(list(
+    val_data["text"]), truncation=True, padding=True, max_length=max_length, return_tensors="tf")
+val_labels = np.array(val_data["star"]).astype(int)
+val_dataset = tf.data.Dataset.from_tensor_slices(
+    (dict(val_encodings), val_labels))
 
-        # Handle long texts by truncating to max_length
-        if input_ids.shape[1] > max_length:
-            input_ids = input_ids[:, :max_length]
-            attention_mask = attention_mask[:, :max_length]
+# Ensemble predictions
+ensemble_predictions = np.zeros((len(val_labels), num_models))
 
-        with torch.no_grad():
-            logits = model(input_ids=input_ids,
-                           attention_mask=attention_mask).logits
+for i, model in enumerate(models):
+    model_predictions = model.predict(val_dataset.batch(batch_size))
+    ensemble_predictions[:, i] = tf.argmax(model_predictions["logits"], axis=1)
 
-        predicted_class = torch.argmax(logits, dim=1).item()
-        # Shift back to the original label range (-1, 0, 1)
-        votes.append(predicted_class - 1)
+# Calculate the ensemble result by averaging predictions
+ensemble_predictions_avg = np.mean(ensemble_predictions, axis=1)
 
-    # Perform majority voting
-    majority_vote = max(set(votes), key=votes.count)
-    return majority_vote
+# Convert the averaged predictions to integer labels (assuming they are rounded)
+ensemble_predictions_avg = np.round(ensemble_predictions_avg).astype(int)
 
+# Calculate the ensemble accuracy
+ensemble_accuracy = accuracy_score(val_labels, ensemble_predictions_avg)
+print(f"Ensemble Accuracy (Averaging): {ensemble_accuracy * 100:.2f}%")
 
-def calculate_ensemble_accuracy(models, tokenizers, texts, labels, max_length=512):
-    predictions = []
+# Calculate the majority vote (mode) for each sample
+ensemble_predictions_mode = np.apply_along_axis(
+    lambda x: np.bincount(np.round(x).astype(int)).argmax(), axis=1, arr=ensemble_predictions)
 
-    for text, label in zip(texts, labels):
-        # Predict sentiment using majority voting with text truncation
-        sentiment = predict_sentiment_ensemble(
-            models, tokenizers, text, max_length)
-        predictions.append(sentiment)
-
-    # Calculate ensemble accuracy
-    ensemble_accuracy = accuracy_score(labels, predictions)
-    return ensemble_accuracy
-
-
-def main():
-    # Load the fine-tuned models and individual tokenizers for ensemble
-    model_paths = ["fine_tuned_sentiment_model_1",
-                   "fine_tuned_sentiment_model_2", "fine_tuned_sentiment_model_3"]
-    models = [BertForSequenceClassification.from_pretrained(
-        path) for path in model_paths]
-
-    tokenizer_paths = ["fine_tuned_sentiment_model_1",
-                       "fine_tuned_sentiment_model_2", "fine_tuned_sentiment_model_3"]
-    tokenizers = [BertTokenizer.from_pretrained(
-        path) for path in tokenizer_paths]
-
-    # Load your dataset for evaluation
-    df_eval = pd.read_csv("Datasets/TRdata.csv", encoding="utf-16")
-    eval_texts = df_eval["Metinler"].values
-    eval_labels = df_eval["Duygular"].values
-
-    print("Calculating ensemble accuracy...")
-
-    # Set the desired max_length for text truncation
-    max_length = 512
-
-    # Calculate ensemble accuracy with text truncation
-    ensemble_accuracy = calculate_ensemble_accuracy(
-        models, tokenizers, eval_texts, eval_labels, max_length)
-
-    print(f"Ensemble Model Accuracy: {ensemble_accuracy:.4f}")
-
-
-if __name__ == "__main__":
-    main()
+# Calculate the ensemble accuracy
+ensemble_accuracy = accuracy_score(val_labels, ensemble_predictions_mode)
+print(f"Ensemble Accuracy (Max Voting): {ensemble_accuracy * 100:.2f}%")

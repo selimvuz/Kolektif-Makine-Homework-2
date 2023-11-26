@@ -1,120 +1,88 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
-from transformers import BertTokenizer, BertForSequenceClassification
+import tensorflow as tf
+from transformers import BertTokenizer, TFBertForSequenceClassification
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import pandas as pd
+import numpy as np
+import json
 
-# Load the dataset with UTF-16 encoding
-df = pd.read_csv("Datasets/TRdata_1.csv", encoding="utf-16")
+# Load your JSON data directly
+with open("Datasets/part_1.json", "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+# Convert to pandas DataFrame
+df = pd.DataFrame(data)
 
 # Split the dataset into training and validation sets
-train_df, val_df = train_test_split(df, test_size=0.2, random_state=42)
+train_data, val_data = train_test_split(df, test_size=0.5, random_state=42)
 
-# Define a custom dataset
+# Fine-tuning parameters
+max_length = 128
+batch_size = 128
+epochs = 5
+num_models = 5  # Number of models to create
 
+# Load pre-trained BERT model and tokenizer
+tokenizer = BertTokenizer.from_pretrained("dbmdz/bert-base-turkish-uncased")
 
-class SentimentDataset(Dataset):
-    def __init__(self, texts, labels, tokenizer, max_length=128):
-        self.texts = texts
-        self.labels = labels
-        self.tokenizer = tokenizer
-        self.max_length = max_length
+# Tokenize and format the data
+encodings = tokenizer(list(df["text"]), truncation=True,
+                      padding=True, max_length=max_length, return_tensors="tf")
+labels = np.array(df["star"])
 
-    def __len__(self):
-        return len(self.texts)
+# Prepare TensorFlow dataset
+dataset = tf.data.Dataset.from_tensor_slices((dict(encodings), labels))
 
-    def __getitem__(self, idx):
-        text = str(self.texts[idx])
-        label = int(self.labels[idx]) + 1  # Shift labels to start from 0
+# Create and fine-tune multiple models
+for i in range(num_models):
+    # Resample the data for each iteration
+    subset_size = len(df) // 2
+    resampled_indices = np.random.choice(len(df), subset_size, replace=True)
+    resampled_data = df.iloc[resampled_indices]
 
-        encoding = self.tokenizer(
-            text,
-            add_special_tokens=True,
-            truncation=True,
-            max_length=self.max_length,
-            padding="max_length",
-            return_tensors="pt",
-        )
+    # Convert star ratings to integer labels
+    resampled_data['label'] = resampled_data['star'].apply(lambda x: int(x))
 
-        return {
-            "input_ids": encoding["input_ids"].flatten(),
-            "attention_mask": encoding["attention_mask"].flatten(),
-            "labels": torch.tensor(label, dtype=torch.long),
-        }
+    # Load a new tokenizer for each iteration
+    tokenizer = BertTokenizer.from_pretrained(
+        "ytu-ce-cosmos/turkish-small-bert-uncased")
 
+    # Prepare resampled TensorFlow dataset
+    resampled_encodings = tokenizer(list(
+        resampled_data["text"]), truncation=True, padding=True, max_length=max_length, return_tensors="tf")
+    resampled_labels = np.array(resampled_data["label"])
+    resampled_dataset = tf.data.Dataset.from_tensor_slices(
+        (dict(resampled_encodings), resampled_labels))
 
-# Load the tokenizer and model
-tokenizer = BertTokenizer.from_pretrained(
-    "ytu-ce-cosmos/turkish-small-bert-uncased")
-model = BertForSequenceClassification.from_pretrained(
-    "ytu-ce-cosmos/turkish-small-bert-uncased", num_labels=3
-)
+    # Load pre-trained BERT model for each iteration
+    model = TFBertForSequenceClassification.from_pretrained(
+        "ytu-ce-cosmos/turkish-small-bert-uncased", num_labels=6)
 
-# Create datasets and dataloaders
-train_dataset = SentimentDataset(
-    train_df["Metinler"].values, train_df["Duygular"].values, tokenizer
-)
-val_dataset = SentimentDataset(
-    val_df["Metinler"].values, val_df["Duygular"].values, tokenizer
-)
+    # Model compilation
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=2e-5),
+                  loss=tf.keras.losses.SparseCategoricalCrossentropy(
+                      from_logits=True),
+                  metrics=["accuracy"])
 
-train_dataloader = DataLoader(train_dataset, batch_size=512, shuffle=True)
-val_dataloader = DataLoader(val_dataset, batch_size=512, shuffle=False)
+    # Fine-tune the model
+    model.fit(resampled_dataset.shuffle(1000).batch(
+        batch_size), epochs=epochs, batch_size=batch_size)
 
-# Set up training parameters
-optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model.to(device)
+    # Save the fine-tuned model
+    model.save_pretrained(f"Small_Models/model_small_{i + 1}")
+    tokenizer.save_pretrained(f"Small_Models/model_small_{i + 1}")
 
-# Training loop
-num_epochs = 5
+    # Tokenize and format the validation data
+    val_encodings = tokenizer(list(
+        val_data["text"]), truncation=True, padding=True, max_length=max_length, return_tensors="tf")
+    val_labels = np.round(np.array(val_data["star"])).astype(int)
+    val_dataset = tf.data.Dataset.from_tensor_slices(
+        (dict(val_encodings), val_labels))
+    val_data["star"] = val_data["star"].astype(int)
 
-for epoch in range(num_epochs):
-    model.train()
-    for batch in train_dataloader:
-        input_ids = batch["input_ids"].to(device)
-        attention_mask = batch["attention_mask"].to(device)
-        labels = batch["labels"].to(device)
+    # Evaluate the model on the validation set
+    val_predictions = model.predict(val_dataset.batch(batch_size))
+    val_predictions = tf.argmax(val_predictions.logits, axis=1)
+    val_accuracy = accuracy_score(val_data["star"], val_predictions)
 
-        optimizer.zero_grad()
-
-        outputs = model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            labels=labels,
-        )
-
-        loss = outputs.loss
-        loss.backward()
-        optimizer.step()
-
-    # Validation
-    model.eval()
-    val_preds = []
-    val_labels = []
-    with torch.no_grad():
-        for batch in val_dataloader:
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            labels = batch["labels"].to(device)
-
-            outputs = model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                labels=labels,
-            )
-
-            logits = outputs.logits
-            preds = torch.argmax(logits, dim=1).cpu().numpy()
-
-            val_preds.extend(preds)
-            val_labels.extend(labels.cpu().numpy())
-
-    val_accuracy = accuracy_score(val_labels, val_preds)
-    print(
-        f"Epoch {epoch + 1}/{num_epochs} - Validation Accuracy: {val_accuracy}")
-
-# Save the fine-tuned model
-model.save_pretrained("fine_tuned_sentiment_model_1")
-tokenizer.save_pretrained("fine_tuned_sentiment_model_1")
+    print(f"Model {i + 1} Validation Accuracy: {val_accuracy * 100:.2f}%")

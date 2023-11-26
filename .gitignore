@@ -1,5 +1,6 @@
 /Datasets/
 /Models/
-/fine_tuned_sentiment_model*/
+/Logs/
 *.csv
 *.h5
+temp*
