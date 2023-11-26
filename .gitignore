@@ -1,5 +1,6 @@
 /Datasets/
 /Models/
+/Small_Models/
 /Logs/
 *.csv
 *.h5

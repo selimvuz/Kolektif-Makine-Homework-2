@@ -17,7 +17,7 @@ df = pd.DataFrame(data)
 train_data, val_data = train_test_split(df, test_size=0.1, random_state=42)
 
 # Load pre-trained BERT model and tokenizer
-tokenizer = BertTokenizer.from_pretrained("Models/model_1")
+tokenizer = BertTokenizer.from_pretrained("Small_Models/model_small_1")
 
 # Number of models
 num_models = 5
@@ -26,7 +26,7 @@ num_models = 5
 models = []
 for i in range(1, num_models + 1):
     model = TFBertForSequenceClassification.from_pretrained(
-        f"Models/model_{i}")
+        f"Small_Models/model_small_{i}")
     models.append(model)
 
 # Load and preprocess validation data
