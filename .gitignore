@@ -2,6 +2,7 @@
 /Models/
 /Small_Models/
 /Logs/
+/Classifiers/
 *.csv
 *.h5
 temp*
