@@ -1,6 +1,8 @@
 from transformers import AutoTokenizer, BertForMaskedLM
 import torch
 
+# Başarısız denemeler
+
 
 def get_dropout_representation(model, tokenizer, text):
     inputs = tokenizer(text, return_tensors="pt")
