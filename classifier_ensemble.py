@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import joblib
 
-# Eğittiğiniz modelleri yükleyin
+# Eğittiğimiz modelleri yükle
 ridge_classifier = joblib.load('Classifiers/RidgeClassifier.joblib')
 passive_aggressive_classifier = joblib.load(
     'Classifiers/PassiveAggressive.joblib')
@@ -18,7 +18,7 @@ decision_tree = joblib.load('Classifiers/DecisionTree.joblib')
 linear_svc = joblib.load('Classifiers/LinearSVC.joblib')
 logistic_regression = joblib.load('Classifiers/LogisticRegression.joblib')
 
-# Load data
+# Verileri yükle
 data = np.load('combined_feature_vectors.npy')
 X = data[:, :-1]  # Feature vectors
 y = data[:, -1]   # Star ratings
@@ -27,10 +27,10 @@ bins = [0, 1, 2, 3, 4, 5]  # Define the bin edges
 labels = ['Low', 'Low-Med', 'Medium', 'Med-High',
           'High']  # Assign labels to the bins
 
-# Create a new column with discrete categories
+# Kesikli kategorileri içeren yeni bir sütun oluşturun
 y_discrete = pd.cut(y, bins=bins, labels=labels, include_lowest=True)
 
-# Map labels to numerical values
+# Alanları sayısal değerlere eşleyin
 label_mapping = {'Low': 1, 'Low-Med': 2, 'Medium': 3, 'Med-High': 4, 'High': 5}
 y_discrete_numeric = y_discrete.map(label_mapping)
 
