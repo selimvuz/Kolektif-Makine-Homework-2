@@ -1,5 +1,7 @@
 from transformers import pipeline
 
+# Ön izleme
+
 # Zero-shot sınıflandırma modelini yükle
 pipe = pipeline("zero-shot-classification")
 
