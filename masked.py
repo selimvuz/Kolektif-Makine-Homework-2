@@ -2,6 +2,8 @@ from collections import Counter
 from transformers import AutoTokenizer, BertForMaskedLM
 import random
 
+# Masked Language Modeling (MLM) modelini yükle
+
 
 def mask_sentence(sentence, mask_ratio):
     words = sentence.split()
